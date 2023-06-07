@@ -51,7 +51,10 @@ impl Action for AptPackage {
     }
 
     fn display_name(&self) -> String {
-        "".to_string()
+        format!("Install APT package {}", match self.name {
+            ActionInput::Static(ref name) => name,
+            ActionInput::Dynamic(_) => "<dynamic>"
+        })
     }
 }
 
@@ -110,7 +113,7 @@ impl Action for AptPackages {
     }
 
     fn display_name(&self) -> String {
-        "".to_string()
+        "Install APT packages".to_string()
     }
 }
 
@@ -161,7 +164,7 @@ impl Action for AptRepository {
     }
 
     fn display_name(&self) -> String {
-        "".to_string()
+        "Add repository".to_string()
     }
 }
 
@@ -198,6 +201,6 @@ impl Action for AptUpdate {
     }
 
     fn display_name(&self) -> String {
-        "".to_string()
+        "Update APT Cache".to_string()
     }
 }
