@@ -2,5 +2,6 @@
 members = [
   "apt",
   "http",
-  "string"
+  "string",
+  "tempfile"
 ]

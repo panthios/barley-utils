@@ -1,30 +1,29 @@
 use barley_runtime::prelude::*;
 use anyhow::anyhow;
-use reqwest::get;
 
 
-pub struct HttpGet {
-    url: ActionInput<String>
+pub struct TempFile {
+    contents: ActionInput<String>
 }
 
-impl HttpGet {
-    pub fn new<U>(url: U) -> Self
+impl TempFile {
+    pub fn new<C>(contents: C) -> Self
     where
-        U: Into<ActionInput<String>>,
+        C: Into<ActionInput<String>>,
     {
-        Self { url: url.into() }
+        Self { contents: contents.into() }
     }
 }
 
 #[async_trait]
-impl Action for HttpGet {
+impl Action for TempFile {
     async fn check(&self, _ctx: Runtime) -> Result<bool> {
         Ok(false)
     }
 
     async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>> {
-        let url = match self.url {
-            ActionInput::Static(ref url) => url.clone(),
+        let contents = match self.contents {
+            ActionInput::Static(ref contents) => contents.clone(),
             ActionInput::Dynamic(ref action) => {
                 ctx.get_output(action.clone()).await
                     .ok_or(anyhow!("Action output not found"))?
@@ -32,10 +31,10 @@ impl Action for HttpGet {
             }
         };
 
-        let res = get(url).await?;
-        let body = res.text().await?;
+        let temp_file = std::env::temp_dir().join(rand::random::<u64>().to_string());
+        std::fs::write(temp_file.clone(), contents)?;
 
-        Ok(Some(ActionOutput::String(body)))
+        Ok(Some(ActionOutput::String(temp_file.to_str().unwrap().to_owned())))
     }
 
     async fn rollback(&self, _ctx: Runtime) -> Result<()> {
@@ -43,9 +42,6 @@ impl Action for HttpGet {
     }
 
     fn display_name(&self) -> String {
-        format!("HttpGet {}", match self.url {
-            ActionInput::Static(ref url) => url.clone(),
-            ActionInput::Dynamic(_) => "<dynamic>".to_owned()
-        })
+        "TempFile".to_owned()
     }
 }
