@@ -55,6 +55,65 @@ impl Action for AptPackage {
     }
 }
 
+pub struct AptPackages {
+    names: Vec<ActionInput<String>>
+}
+
+impl AptPackages {
+    pub fn new<I, V>(names: I) -> Self
+    where
+        I: IntoIterator<Item = V>,
+        V: Into<ActionInput<String>>,
+    {
+        Self {
+            names: names.into_iter().map(|v| v.into()).collect()
+        }
+    }
+}
+
+#[async_trait]
+impl Action for AptPackages {
+    async fn check(&self, _ctx: Runtime) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>> {
+        let mut names = Vec::new();
+
+        for name in &self.names {
+            let name = match name {
+                ActionInput::Static(name) => name.clone(),
+                ActionInput::Dynamic(action) => ctx.get_output(action.clone()).await
+                    .ok_or(anyhow!("Missing output"))?
+                    .try_into()?
+            };
+
+            names.push(name);
+        }
+
+        let mut cmd = Command::new("apt-get");
+        cmd.arg("install");
+        cmd.arg("-y");
+        cmd.args(names);
+
+        let output = cmd.output().await?;
+
+        if !output.status.success() {
+            return Err(anyhow!("Failed to install packages"));
+        }
+
+        Ok(None)
+    }
+
+    async fn rollback(&self, _ctx: Runtime) -> Result<()> {
+        Ok(())
+    }
+
+    fn display_name(&self) -> String {
+        "".to_string()
+    }
+}
+
 pub struct AptRepository {
     url: ActionInput<String>
 }
