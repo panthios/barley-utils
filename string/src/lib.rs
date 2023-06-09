@@ -1,5 +1,4 @@
 use barley_runtime::prelude::*;
-use anyhow::anyhow;
 
 
 pub struct Join(Vec<ActionInput<String>>);
@@ -15,18 +14,18 @@ impl Join {
 
 #[async_trait]
 impl Action for Join {
-    async fn check(&self, _ctx: Runtime) -> Result<bool> {
+    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
         Ok(false)
     }
 
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>> {
+    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
         let mut result = String::new();
 
         for input in &self.0 {
             let value = match input {
                 ActionInput::Static(value) => value.clone(),
                 ActionInput::Dynamic(action) => ctx.get_output(action.clone()).await
-                    .ok_or(anyhow!("Missing output"))?
+                    .ok_or(ActionError::NoActionReturn)?
                     .try_into()?
             };
 
@@ -36,7 +35,7 @@ impl Action for Join {
         Ok(Some(result.into()))
     }
 
-    async fn rollback(&self, _ctx: Runtime) -> Result<()> {
+    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
         Ok(())
     }
 

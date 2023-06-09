@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.71"
-barley-runtime = "0.4.0"
+barley-runtime = { version = "0.5.0", git = "https://github.com/panthios/barley" }
 rand = "0.8.5"
 tokio = { version = "1.28.2", features = ["fs"] }

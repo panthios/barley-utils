@@ -1,5 +1,4 @@
 use barley_runtime::prelude::*;
-use anyhow::anyhow;
 
 
 pub struct TempFile {
@@ -17,27 +16,32 @@ impl TempFile {
 
 #[async_trait]
 impl Action for TempFile {
-    async fn check(&self, _ctx: Runtime) -> Result<bool> {
+    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
         Ok(false)
     }
 
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>> {
+    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
         let contents = match self.contents {
             ActionInput::Static(ref contents) => contents.clone(),
             ActionInput::Dynamic(ref action) => {
                 ctx.get_output(action.clone()).await
-                    .ok_or(anyhow!("Action output not found"))?
+                    .ok_or(ActionError::NoActionReturn)?
                     .try_into()?
             }
         };
 
         let temp_file = std::env::temp_dir().join(rand::random::<u64>().to_string());
-        std::fs::write(temp_file.clone(), contents)?;
+        std::fs::write(temp_file.clone(), contents).map_err(|e| {
+            ActionError::ActionFailed(
+                format!("Failed to write temp file: {}", temp_file.to_str().unwrap()),
+                e.to_string()
+            )
+        })?;
 
         Ok(Some(ActionOutput::String(temp_file.to_str().unwrap().to_owned())))
     }
 
-    async fn rollback(&self, _ctx: Runtime) -> Result<()> {
+    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
         Ok(())
     }
 
