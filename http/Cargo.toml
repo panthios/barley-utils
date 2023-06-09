@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 barley-runtime = { version = "0.5.0", git = "https://github.com/panthios/barley" }
-reqwest = { version = "0.11.18", features = ["rustls"], default-features = false }
+reqwest = { version = "0.11.18", features = ["rustls", "hyper-rustls", "rustls-tls"], default-features = false }
