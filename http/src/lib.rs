@@ -17,7 +17,7 @@ impl HttpGet {
 
 #[async_trait]
 impl Action for HttpGet {
-    async fn load_state(&mut self, builder: RuntimeBuilder) {
+    async fn load_state(&self, builder: &mut RuntimeBuilder) {
         let client: Client = ClientBuilder::new()
             .use_rustls_tls()
             .build()
