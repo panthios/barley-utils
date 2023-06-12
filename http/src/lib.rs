@@ -1,5 +1,5 @@
 use barley_runtime::prelude::*;
-use reqwest::get;
+use reqwest::{Client, ClientBuilder};
 
 
 pub struct HttpGet {
@@ -17,6 +17,15 @@ impl HttpGet {
 
 #[async_trait]
 impl Action for HttpGet {
+    async fn load_state(&mut self, builder: RuntimeBuilder) {
+        let client: Client = ClientBuilder::new()
+            .use_rustls_tls()
+            .build()
+            .unwrap();
+
+        builder.add_state(client);
+    }
+
     async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
         Ok(false)
     }
@@ -31,11 +40,17 @@ impl Action for HttpGet {
             }
         };
 
-        let res = get(url.clone()).await.map_err(|e| {
-            ActionError::ActionFailed(
-                format!("Failed to GET URL: {}", url),
-                e.to_string()
-            )
+        let client = ctx.get_state::<Client>()
+            .ok_or(ActionError::StateNotLoaded)?;
+
+        let res = client.get(url.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                ActionError::ActionFailed(
+                    format!("Failed to GET URL: {}", url),
+                    e.to_string()
+                )
         })?;
 
         let body = res.text().await.map_err(|e| {
