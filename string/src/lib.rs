@@ -14,29 +14,33 @@ impl Join {
 
 #[async_trait]
 impl Action for Join {
-    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
-        Ok(false)
+    async fn probe(&self, _runtime: Runtime) -> Result<Probe, ActionError> {
+        Ok(Probe {
+            needs_run: true,
+            can_rollback: false
+        })
     }
 
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
-        let mut result = String::new();
+    async fn run(&self, runtime: Runtime, op: Operation) -> Result<Option<ActionOutput>, ActionError> {
+        if matches!(op, Operation::Rollback) {
+            return Err(ActionError::OperationNotSupported);
+        }
+
+        let mut output = String::new();
 
         for input in &self.0 {
-            let value = match input {
-                ActionInput::Static(value) => value.clone(),
-                ActionInput::Dynamic(action) => ctx.get_output(action.clone()).await
+            let input = match input {
+                ActionInput::Static(input) => input.clone(),
+                ActionInput::Dynamic(input) => runtime.get_output(input.clone())
+                    .await
                     .ok_or(ActionError::NoActionReturn)?
                     .try_into()?
             };
 
-            result.push_str(&value);
+            output.push_str(&input);
         }
 
-        Ok(Some(result.into()))
-    }
-
-    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
-        Ok(())
+        Ok(Some(ActionOutput::String(output)))
     }
 
     fn display_name(&self) -> String {

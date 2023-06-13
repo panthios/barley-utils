@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 barley-runtime = { version = "0.6.0", git = "https://github.com/panthios/barley" }
-rand = "0.8.5"
 tokio = { version = "1.28.2", features = ["fs"] }
+uuid = "1.3.4"

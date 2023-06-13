@@ -26,45 +26,52 @@ impl Action for HttpGet {
         builder.add_state(client);
     }
 
-    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
-        Ok(false)
+    async fn probe(&self, _runtime: Runtime) -> Result<Probe, ActionError> {
+        Ok(Probe {
+            needs_run: true,
+            can_rollback: false
+        })
     }
 
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
-        let url = match self.url {
-            ActionInput::Static(ref url) => url.clone(),
-            ActionInput::Dynamic(ref action) => {
-                ctx.get_output(action.clone()).await
-                    .ok_or(ActionError::NoActionReturn)?
-                    .try_into()?
-            }
+    async fn run(&self, runtime: Runtime, op: Operation) -> Result<Option<ActionOutput>, ActionError> {
+        if matches!(op, Operation::Rollback) {
+            return Err(ActionError::OperationNotSupported);
+        }
+
+        let client: Arc<Client> = runtime.get_state().unwrap();
+        let url = match &self.url {
+            ActionInput::Static(url) => url.clone(),
+            ActionInput::Dynamic(url) => runtime.get_output(url.clone())
+                .await
+                .ok_or(ActionError::NoActionReturn)?
+                .try_into()?
         };
 
-        let client = ctx.get_state::<Client>()
-            .ok_or(ActionError::StateNotLoaded)?;
-
-        let res = client.get(url.clone())
+        let response = client.get(url)
             .send()
             .await
-            .map_err(|e| {
-                ActionError::ActionFailed(
-                    format!("Failed to GET URL: {}", url),
-                    e.to_string()
-                )
-        })?;
+            .map_err(|e| ActionError::ActionFailed(
+                format!("Failed to send request: {}", e),
+                format!("Failed to send request: {}", e)
+            ))?;
+        
+        let status = response.status();
 
-        let body = res.text().await.map_err(|e| {
-            ActionError::ActionFailed(
-                format!("Failed to GET URL: {}", url),
-                e.to_string()
-            )
-        })?;
+        if !status.is_success() {
+            return Err(ActionError::ActionFailed(
+                format!("Request failed with status code: {}", status),
+                format!("Request failed with status code: {}", status)
+            ));
+        }
 
+        let body = response.text()
+            .await
+            .map_err(|e| ActionError::ActionFailed(
+                format!("Failed to read response body: {}", e),
+                format!("Failed to read response body: {}", e)
+            ))?;
+        
         Ok(Some(ActionOutput::String(body)))
-    }
-
-    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
-        Ok(())
     }
 
     fn display_name(&self) -> String {

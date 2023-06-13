@@ -19,44 +19,90 @@ impl AptPackage {
 
 #[async_trait]
 impl Action for AptPackage {
-    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
-        Ok(false)
-    }
-
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
+    async fn probe(&self, runtime: Runtime) -> Result<Probe, ActionError> {
         let name = match &self.name {
             ActionInput::Static(name) => name.clone(),
-            ActionInput::Dynamic(action) => ctx.get_output(action.clone()).await
+            ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
                 .ok_or(ActionError::NoActionReturn)?
                 .try_into()?
         };
 
-        let mut cmd = Command::new("apt-get");
-        cmd.arg("install");
-        cmd.arg("-y");
-        cmd.arg(name.clone());
-
-        let output = cmd.output().await.map_err(|_| {
-            ActionError::ActionFailed(
-                format!("Failed to install package: {}", name),
-                "Failed to run apt-get (internal error)".to_string()
-            )
-        })?;
-
-        if !output.status.success() {
-            return Err(
+        let installed = Command::new("dpkg-query")
+            .arg("-W")
+            .arg("-f='${Status}'")
+            .arg(name.clone())
+            .output()
+            .await
+            .map_err(|_| {
                 ActionError::ActionFailed(
-                    format!("Failed to install package: {}", name),
-                    format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    format!("Failed to check if package is installed: {}", name),
+                    "Failed to run dpkg-query (internal error)".to_string()
                 )
-            );
-        }
+            })?
+            .status
+            .success();
 
-        Ok(None)
+        Ok(Probe {
+            needs_run: !installed,
+            can_rollback: true
+        })
     }
 
-    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
-        Ok(())
+    async fn run(&self, runtime: Runtime, op: Operation) -> Result<Option<ActionOutput>, ActionError> {
+        let name = match &self.name {
+            ActionInput::Static(name) => name.clone(),
+            ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
+                .ok_or(ActionError::NoActionReturn)?
+                .try_into()?
+        };
+
+        if matches!(op, Operation::Perform) {
+            let mut cmd = Command::new("apt-get");
+            cmd.arg("install")
+                .arg("-y")
+                .arg(name.clone());
+
+            let output = cmd.output().await.map_err(|_| {
+                ActionError::ActionFailed(
+                    format!("Failed to install package: {}", name),
+                    "Failed to run apt-get (internal error)".to_string()
+                )
+            })?;
+
+            if !output.status.success() {
+                return Err(
+                    ActionError::ActionFailed(
+                        format!("Failed to install package: {}", name),
+                        format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    )
+                );
+            }
+
+            Ok(None)
+        } else {
+            let mut cmd = Command::new("apt-get");
+            cmd.arg("remove")
+                .arg("-y")
+                .arg(name.clone());
+
+            let output = cmd.output().await.map_err(|_| {
+                ActionError::ActionFailed(
+                    format!("Failed to remove package: {}", name),
+                    "Failed to run apt-get (internal error)".to_string()
+                )
+            })?;
+
+            if !output.status.success() {
+                return Err(
+                    ActionError::ActionFailed(
+                        format!("Failed to remove package: {}", name),
+                        format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    )
+                );
+            }
+
+            Ok(None)
+        }
     }
 
     fn display_name(&self) -> String {
@@ -85,50 +131,112 @@ impl AptPackages {
 
 #[async_trait]
 impl Action for AptPackages {
-    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
-        Ok(false)
-    }
-
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
-        let mut names = Vec::new();
+    async fn probe(&self, runtime: Runtime) -> Result<Probe, ActionError> {
+        let mut needs_run = false;
 
         for name in &self.names {
             let name = match name {
                 ActionInput::Static(name) => name.clone(),
-                ActionInput::Dynamic(action) => ctx.get_output(action.clone()).await
+                ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
                     .ok_or(ActionError::NoActionReturn)?
                     .try_into()?
             };
 
-            names.push(name);
+            let installed = Command::new("dpkg-query")
+                .arg("-W")
+                .arg("-f='${Status}'")
+                .arg(name.clone())
+                .output()
+                .await
+                .map_err(|_| {
+                    ActionError::ActionFailed(
+                        format!("Failed to check if package is installed: {}", name),
+                        "Failed to run dpkg-query (internal error)".to_string()
+                    )
+                })?
+                .status
+                .success();
+
+            if !installed {
+                needs_run = true;
+                break;
+            }
         }
 
-        let mut cmd = Command::new("apt-get");
-        cmd.arg("install");
-        cmd.arg("-y");
-        cmd.args(names.clone());
-
-        let output = cmd.output().await.map_err(|_| {
-            ActionError::ActionFailed(
-                format!("Failed to install packages: {:?}", names),
-                "Failed to run apt-get (internal error)".to_string()
-            )
-        })?;
-
-        if !output.status.success() {
-            return Err(
-                ActionError::ActionFailed(
-                    format!("Failed to install packages: {:?}", names),
-                    format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
-                )
-            );
-        }
-
-        Ok(None)
+        Ok(Probe {
+            needs_run,
+            can_rollback: true
+        })
     }
 
-    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
-        Ok(())
+    async fn run(&self, runtime: Runtime, op: Operation) -> Result<Option<ActionOutput>, ActionError> {
+        if matches!(op, Operation::Perform) {
+            let mut cmd = Command::new("apt-get");
+            cmd.arg("install")
+                .arg("-y");
+
+            for name in &self.names {
+                let name = match name {
+                    ActionInput::Static(name) => name.clone(),
+                    ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
+                        .ok_or(ActionError::NoActionReturn)?
+                        .try_into()?
+                };
+
+                cmd.arg(name);
+            }
+
+            let output = cmd.output().await.map_err(|_| {
+                ActionError::ActionFailed(
+                    "Failed to install packages".to_string(),
+                    "Failed to run apt-get (internal error)".to_string()
+                )
+            })?;
+
+            if !output.status.success() {
+                return Err(
+                    ActionError::ActionFailed(
+                        "Failed to install packages".to_string(),
+                        format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    )
+                );
+            }
+
+            Ok(None)
+        } else {
+            let mut cmd = Command::new("apt-get");
+            cmd.arg("remove")
+                .arg("-y");
+
+            for name in &self.names {
+                let name = match name {
+                    ActionInput::Static(name) => name.clone(),
+                    ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
+                        .ok_or(ActionError::NoActionReturn)?
+                        .try_into()?
+                };
+
+                cmd.arg(name);
+            }
+
+            let output = cmd.output().await.map_err(|_| {
+                ActionError::ActionFailed(
+                    "Failed to remove packages".to_string(),
+                    "Failed to run apt-get (internal error)".to_string()
+                )
+            })?;
+
+            if !output.status.success() {
+                return Err(
+                    ActionError::ActionFailed(
+                        "Failed to remove packages".to_string(),
+                        format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    )
+                );
+            }
+
+            Ok(None)
+        }
     }
 
     fn display_name(&self) -> String {
@@ -153,43 +261,85 @@ impl AptRepository {
 
 #[async_trait]
 impl Action for AptRepository {
-    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
-        Ok(false)
-    }
-
-    async fn perform(&self, ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
+    async fn probe(&self, runtime: Runtime) -> Result<Probe, ActionError> {
         let url = match &self.url {
             ActionInput::Static(url) => url.clone(),
-            ActionInput::Dynamic(action) => ctx.get_output(action.clone()).await
+            ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
                 .ok_or(ActionError::NoActionReturn)?
                 .try_into()?
         };
 
-        let mut cmd = Command::new("add-apt-repository");
-        cmd.arg("-y");
+        let mut cmd = Command::new("apt-cache");
+        cmd.arg("policy");
         cmd.arg(url.clone());
 
         let output = cmd.output().await.map_err(|_| {
             ActionError::ActionFailed(
-                format!("Failed to add repository: {}", url),
-                "Failed to run add-apt-repository (internal error)".to_string()
+                format!("Failed to check if repository is installed: {}", url),
+                "Failed to run apt-cache (internal error)".to_string()
             )
         })?;
 
-        if !output.status.success() {
-            return Err(
-                ActionError::ActionFailed(
-                    format!("Failed to add repository: {}", url),
-                    format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
-                )
-            );
-        }
+        let installed = output.status.success();
 
-        Ok(None)
+        Ok(Probe {
+            needs_run: !installed,
+            can_rollback: true
+        })
     }
 
-    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
-        Ok(())
+    async fn run(&self, runtime: Runtime, op: Operation) -> Result<Option<ActionOutput>, ActionError> {
+        let url = match &self.url {
+            ActionInput::Static(url) => url.clone(),
+            ActionInput::Dynamic(action) => runtime.get_output(action.clone()).await
+                .ok_or(ActionError::NoActionReturn)?
+                .try_into()?
+        };
+
+        if matches!(op, Operation::Perform) {
+            let mut cmd = Command::new("add-apt-repository");
+            cmd.arg(url.clone());
+
+            let output = cmd.output().await.map_err(|_| {
+                ActionError::ActionFailed(
+                    format!("Failed to add repository: {}", url),
+                    "Failed to run add-apt-repository (internal error)".to_string()
+                )
+            })?;
+
+            if !output.status.success() {
+                return Err(
+                    ActionError::ActionFailed(
+                        format!("Failed to add repository: {}", url),
+                        format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    )
+                );
+            }
+
+            Ok(None)
+        } else {
+            let mut cmd = Command::new("add-apt-repository");
+            cmd.arg("-r");
+            cmd.arg(url.clone());
+
+            let output = cmd.output().await.map_err(|_| {
+                ActionError::ActionFailed(
+                    format!("Failed to remove repository: {}", url),
+                    "Failed to run add-apt-repository (internal error)".to_string()
+                )
+            })?;
+
+            if !output.status.success() {
+                return Err(
+                    ActionError::ActionFailed(
+                        format!("Failed to remove repository: {}", url),
+                        format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
+                    )
+                );
+            }
+
+            Ok(None)
+        }
     }
 
     fn display_name(&self) -> String {
@@ -208,17 +358,24 @@ impl AptUpdate {
 
 #[async_trait]
 impl Action for AptUpdate {
-    async fn check(&self, _ctx: Runtime) -> Result<bool, ActionError> {
-        Ok(false)
+    async fn probe(&self, _runtime: Runtime) -> Result<Probe, ActionError> {
+        Ok(Probe {
+            needs_run: true,
+            can_rollback: false
+        })
     }
 
-    async fn perform(&self, _ctx: Runtime) -> Result<Option<ActionOutput>, ActionError> {
+    async fn run(&self, _runtime: Runtime, op: Operation) -> Result<Option<ActionOutput>, ActionError> {
+        if matches!(op, Operation::Rollback) {
+            return Err(ActionError::OperationNotSupported);
+        }
+
         let mut cmd = Command::new("apt-get");
         cmd.arg("update");
 
         let output = cmd.output().await.map_err(|_| {
             ActionError::ActionFailed(
-                "Failed to update".to_string(),
+                "Failed to update APT cache".to_string(),
                 "Failed to run apt-get (internal error)".to_string()
             )
         })?;
@@ -226,17 +383,13 @@ impl Action for AptUpdate {
         if !output.status.success() {
             return Err(
                 ActionError::ActionFailed(
-                    "Failed to update".to_string(),
+                    "Failed to update APT cache".to_string(),
                     format!("-- STDERR --\n\n{}\n\n-- STDOUT --\n\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout))
                 )
             );
         }
 
         Ok(None)
-    }
-
-    async fn rollback(&self, _ctx: Runtime) -> Result<(), ActionError> {
-        Ok(())
     }
 
     fn display_name(&self) -> String {
